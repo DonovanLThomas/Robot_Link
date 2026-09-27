@@ -1,0 +1,213 @@
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include "pico/stdlib.h"
+#include "hardware/i2c.h"
+
+#define I2C_PORT i2c0
+#define SDA_PIN 0
+#define SCL_PIN 1
+
+#define MUX_ADDRESS 0x70
+#define IMU_ADDRESS 0x68
+#define TIMEOUT_US 10000
+
+// MPU6050 registers
+#define PWR_MGMT_1   0x6B
+#define ACCEL_XOUT_H 0x3B
+
+typedef struct {
+    float accel_x;
+    float accel_y;
+    float accel_z;
+    float gyro_x;
+    float gyro_y;
+    float gyro_z;
+    float temperature;
+} IMUData;
+
+static bool mux_select_channel(uint8_t channel) {
+    if (channel > 7) {
+        return false;
+    }
+
+    // Enable only one channel. The other IMUs are disconnected from I2C,
+    // so all three can safely use the same address, 0x68.
+    uint8_t mask = (uint8_t)(1u << channel);
+
+    int result = i2c_write_timeout_us(
+        I2C_PORT,
+        MUX_ADDRESS,
+        &mask,
+        1,
+        false,
+        TIMEOUT_US
+    );
+
+    return result == 1;
+}
+
+static bool imu_write_register(uint8_t reg, uint8_t value) {
+    uint8_t buffer[2] = {reg, value};
+
+    int result = i2c_write_timeout_us(
+        I2C_PORT,
+        IMU_ADDRESS,
+        buffer,
+        2,
+        false,
+        TIMEOUT_US
+    );
+
+    return result == 2;
+}
+
+static bool imu_read_registers(uint8_t start_reg, uint8_t *buffer, size_t length) {
+
+    int result = i2c_write_timeout_us(
+        I2C_PORT,
+        IMU_ADDRESS,
+        &start_reg,
+        1,
+        true,   // repeated start
+        TIMEOUT_US
+    );
+
+    if (result != 1) {
+        return false;
+    }
+
+    result = i2c_read_timeout_us(
+        I2C_PORT,
+        IMU_ADDRESS,
+        buffer,
+        length,
+        false,
+        TIMEOUT_US
+    );
+
+    return result == (int)length;
+}
+
+static int16_t combine_bytes(uint8_t high, uint8_t low) {
+    // Shift the high byte into bits 15..8 and put the low byte in bits 7..0.
+    // int16_t interprets the combined bits as a signed sensor value on Pico.
+    return (int16_t)(((uint16_t)high << 8) | low);
+}
+
+bool read_imu(uint8_t channel, IMUData *imu) {
+    if (imu == NULL || channel > 2) {
+        return false;
+    }
+
+    // Select before every read because the previous read may have used
+    // a different IMU. Only the selected channel can respond at 0x68.
+    if (!mux_select_channel(channel)) {
+        return false;
+    }
+
+    uint8_t data[14];
+    if (!imu_read_registers(ACCEL_XOUT_H, data, sizeof(data))) {
+        return false;
+    }
+
+    int16_t accel_x_raw = combine_bytes(data[0], data[1]);
+    int16_t accel_y_raw = combine_bytes(data[2], data[3]);
+    int16_t accel_z_raw = combine_bytes(data[4], data[5]);
+    int16_t temp_raw = combine_bytes(data[6], data[7]);
+    int16_t gyro_x_raw = combine_bytes(data[8], data[9]);
+    int16_t gyro_y_raw = combine_bytes(data[10], data[11]);
+    int16_t gyro_z_raw = combine_bytes(data[12], data[13]);
+
+    // Keep the original default ranges: +/-2 g and +/-250 degrees/second.
+    // The -> operator stores a value in the struct supplied by the caller.
+    imu->accel_x = accel_x_raw / 16384.0f;
+    imu->accel_y = accel_y_raw / 16384.0f;
+    imu->accel_z = accel_z_raw / 16384.0f;
+    imu->gyro_x = gyro_x_raw / 131.0f;
+    imu->gyro_y = gyro_y_raw / 131.0f;
+    imu->gyro_z = gyro_z_raw / 131.0f;
+    imu->temperature = temp_raw / 340.0f + 36.53f;
+
+    return true;
+}
+
+static void print_imu(uint8_t channel, const IMUData *imu, bool success) {
+    printf("IMU %u - Channel %u\n",
+           (unsigned int)channel + 1u, (unsigned int)channel);
+
+    if (!success) {
+        printf("ERROR: Channel %u failed initialization or could not be read.\n\n",
+               (unsigned int)channel);
+        return;
+    }
+
+    printf("Accel: X=%7.3f Y=%7.3f Z=%7.3f g\n",
+           imu->accel_x, imu->accel_y, imu->accel_z);
+    printf("Gyro : X=%7.2f Y=%7.2f Z=%7.2f deg/s\n",
+           imu->gyro_x, imu->gyro_y, imu->gyro_z);
+    printf("Temp : %7.2f C\n\n", imu->temperature);
+}
+
+int main(void) {
+    stdio_init_all();
+
+    // Keep the original USB serial startup behavior.
+    while (!stdio_usb_connected()) {
+        sleep_ms(100);
+    }
+    sleep_ms(500);
+
+    i2c_init(I2C_PORT, 100000);
+    gpio_set_function(SDA_PIN, GPIO_FUNC_I2C);
+    gpio_set_function(SCL_PIN, GPIO_FUNC_I2C);
+    gpio_pull_up(SDA_PIN);
+    gpio_pull_up(SCL_PIN);
+
+    printf("\nTHREE MPU6050 IMU TEST\n");
+    printf("I2C0 initialized: SDA = GP%d, SCL = GP%d\n\n", SDA_PIN, SCL_PIN);
+
+    bool initialized[3] = {false, false, false};
+
+    // Each MPU6050 must be woken while its own mux channel is selected.
+    for (uint8_t channel = 0; channel < 3; channel++) {
+        if (!mux_select_channel(channel)) {
+            printf("ERROR: Could not select mux channel %u.\n",
+                   (unsigned int)channel);
+            continue;
+        }
+
+        if (!imu_write_register(PWR_MGMT_1, 0x00)) {
+            printf("ERROR: Could not wake IMU on channel %u.\n",
+                   (unsigned int)channel);
+            continue;
+        }
+
+        initialized[channel] = true;
+        printf("IMU %u initialized on channel %u.\n",
+               (unsigned int)channel + 1u, (unsigned int)channel);
+    }
+
+    // Allow all successfully awakened sensors time to start.
+    sleep_ms(100);
+
+    IMUData imu1 = {0};
+    IMUData imu2 = {0};
+    IMUData imu3 = {0};
+
+    while (true) {
+        // Each read has its own result; a failure does not skip other IMUs.
+        // Do not report samples from an IMU that failed to wake at startup.
+        bool ok1 = initialized[0] && read_imu(0, &imu1);
+        bool ok2 = initialized[1] && read_imu(1, &imu2);
+        bool ok3 = initialized[2] && read_imu(2, &imu3);
+
+        printf("========================\n");
+        print_imu(0, &imu1, ok1);
+        print_imu(1, &imu2, ok2);
+        print_imu(2, &imu3, ok3);
+        printf("========================\n");
+
+        sleep_ms(500);
+    }
+}
