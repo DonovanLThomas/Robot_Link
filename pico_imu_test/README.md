@@ -1,5 +1,14 @@
 # Three MPU6050s through a TCA9548A
 
+## Live 3D USB viewer
+
+See [viewer/README.md](viewer/README.md) for the Python 3D viewer that reads the
+current `main.c` output, plus setup and demo commands. The current code prints
+acceleration in g and gyro in degrees/second; some older firmware details below
+describe a previous raw-integer version. Acceleration plots do not measure
+physical distances between IMUs. The viewer also accepts externally computed
+XYZ positions for displaying distances in meters.
+
 A small C program for the Raspberry Pi Pico SDK. It reads raw accelerometer
 and gyroscope integers from mux channels 0, 1 and 2, then prints them over USB
 serial about twice per second. Readings scroll so diagnostic messages stay visible.
