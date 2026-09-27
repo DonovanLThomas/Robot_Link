@@ -1,9 +1,13 @@
-# Three IMUs in 3D over USB
+# Three IMUs: live triangle angles over USB
 
 This desktop Python viewer reads the output of the current `../main.c` directly.
-No firmware change is needed. It shows three colored acceleration vectors,
-XYZ readings, and the differences between their endpoints. Drag to rotate.
-Missing/error readings disappear; readings older than two seconds expire.
+No firmware change is needed. By default, the three XYZ readings form a 2D
+triangle with a labelled angle at each IMU. Flattening preserves the 3D triangle
+angles; drawing size is normalized. These are angles between reading endpoints,
+not sensor orientations or angles between physical sensor locations.
+Overlapping or collinear points show undefined angles. The triangle disappears
+when any sensor is missing or its reading is older than two seconds.
+Use `--view 3d` for the original rotatable vectors and endpoint differences.
 
 **The current firmware sends acceleration in g, not position.** The plotted
 separation is an acceleration-vector difference, not the physical distance
@@ -23,6 +27,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements.txt
 python3 imu_viewer.py --demo
+python3 imu_viewer.py --demo --view 3d
 python3 imu_viewer.py --list-ports
 python3 imu_viewer.py --port /dev/cu.usbmodem1101
 ```
@@ -58,7 +63,7 @@ POS,2,0.3,0.0,0.0
 POS,3,0.3,0.4,0.0
 ```
 
-Run `python3 imu_viewer.py --port PORT --mode position`. The viewer then labels
+Run `python3 imu_viewer.py --port PORT --mode position --view 3d`. The viewer then labels
 the axes in meters and reports the three Euclidean distances (0.3, 0.5, 0.4 m
 for the example). **Do not put acceleration readings in POS lines.**
 Try `python3 imu_viewer.py --demo --mode position` for simulated positions.
