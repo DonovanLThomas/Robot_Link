@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.13)
+set(PICO_BOARD pico2_w CACHE STRING "Pico board")
+
+if(NOT PICO_SDK_PATH)
+    set(PICO_SDK_PATH $ENV{PICO_SDK_PATH})
+endif()
+if(NOT EXISTS "${PICO_SDK_PATH}/external/pico_sdk_import.cmake")
+    message(FATAL_ERROR "Set PICO_SDK_PATH to your Raspberry Pi Pico SDK directory")
+endif()
+include("${PICO_SDK_PATH}/external/pico_sdk_import.cmake")
+
+project(pico_mac C CXX ASM)
+set(CMAKE_C_STANDARD 11)
+pico_sdk_init()
+
+add_executable(pico_mac main.c)
+target_link_libraries(pico_mac pico_stdlib pico_cyw43_arch_none)
+pico_enable_stdio_usb(pico_mac 1)
+pico_enable_stdio_uart(pico_mac 0)
+pico_add_extra_outputs(pico_mac)
