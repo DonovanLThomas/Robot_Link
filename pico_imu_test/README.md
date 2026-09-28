@@ -1,22 +1,16 @@
-# Three MPU6050s through a TCA9548A
+# Three MPU6050s over USB and Wi-Fi
 
-## Live 3D USB viewer
+C firmware for a Raspberry Pi Pico 2 W reads three MPU6050s through a TCA9548A
+multiplexer about twice per second. Each record contains acceleration in g,
+gyroscope readings in degrees/second, and temperature in Celsius. The same
+records can go to USB serial and one connected TCP client. Acquisition starts without
+a USB terminal, so the board can run from a USB power supply.
 
-See [viewer/README.md](viewer/README.md) for the Python 3D viewer that reads the
-current `main.c` output, plus setup and demo commands. The current code prints
-acceleration in g and gyro in degrees/second; some older firmware details below
-describe a previous raw-integer version. Acceleration plots do not measure
-physical distances between IMUs. The viewer also accepts externally computed
-XYZ positions for displaying distances in meters.
-
-A small C program for the Raspberry Pi Pico SDK. It reads raw accelerometer
-and gyroscope integers from mux channels 0, 1 and 2, then prints them over USB
-serial about twice per second. Readings scroll so diagnostic messages stay visible.
-No robot control, motion mapping, calibration or software filtering is included.
+The [Python viewer](viewer/README.md) displays the acceleration readings as a
+triangle or 3D vectors and can save the received stream. These readings are not
+physical positions or distances between the sensors.
 
 ## Wiring
-
-Your stated wiring matches this program:
 
 | Pico | TCA9548A |
 | --- | --- |
@@ -25,129 +19,126 @@ Your stated wiring matches this program:
 | GP0 (physical pin 1) | SDA |
 | GP1 (physical pin 2) | SCL |
 
-| Sensor | SDA | SCL |
-| --- | --- | --- |
-| IMU 1 | SD0 | SC0 |
-| IMU 2 | SD1 | SC1 |
-| IMU 3 | SD2 | SC2 |
+Connect IMUs 1–3 to mux channels 0–2 respectively (SD0/SC0, SD1/SC1,
+SD2/SC2). All modules share ground and compatible 3.3 V power.
 
-All modules share 3.3 V and ground. Check that your particular IMU breakout's
-power input supports 3.3 V; onboard regulator arrangements vary.
+- Mux A0/A1/A2 must be LOW for address `0x70`; RESET must stay HIGH.
+- Each MPU6050 AD0 must be LOW for address `0x68`.
+- SDA/SCL need suitable pull-ups to 3.3 V on the upstream and downstream buses.
+  Check the breakout resistors; internal Pico pull-ups alone are weak.
+- Sensor INT, XDA and XCL are unused.
 
-- TCA9548A A0/A1/A2 must be LOW for address `0x70`. Many breakouts already have
-  pull-downs. If strapped differently, change `MUX_ADDRESS` in `main.c`.
-- The mux RESET pin must stay HIGH, normally through a pull-up to 3.3 V already
-  fitted on the breakout. Do not leave it floating if your board lacks one.
-- Each IMU's AD0 must have a defined level. LOW selects `0x68`, HIGH selects
-  `0x69`; the program checks both. All three can use `0x68`.
-- SDA and SCL need pull-ups to 3.3 V on the upstream bus and each used downstream
-  channel. Check existing breakout resistors first; if absent, 4.7 kOhm per line
-  is a typical starting point for short 100 kHz wiring. Pico internal pull-ups
-  alone are weak. Keep all bus pull-ups at 3.3 V for this setup.
-- INT, XDA and XCL on the IMUs are not used.
+The firmware wakes each sensor and reads its default +/-2 g and +/-250 deg/s
+ranges. It does not check WHO_AM_I or automatically detect other addresses.
+Sensors are read sequentially, not simultaneously. Failed initialization requires
+a restart after fixing wiring; runtime read errors are retried each cycle.
 
-## Build
+## Configure Wi-Fi
 
-Install the Pico SDK (2.x for Pico 2), its submodules, CMake, and a complete Arm
-embedded GCC toolchain including newlib. The Raspberry Pi Pico VS Code extension
-can install these. The SDK's normal extra-output support uses picotool to create
-the UF2. Set the SDK path to your installation:
+From this directory:
 
 ```sh
-cd /Users/dono_1k/Collab/pico_imu_test
-export PICO_SDK_PATH=/path/to/pico-sdk
-cmake -S . -B build-pico -DPICO_BOARD=pico
-cmake --build build-pico -j4
+cp wifi_config.example.h wifi_config.h
 ```
 
-For Pico 2, use a separate build directory:
+Edit `wifi_config.h` locally with your 2.4 GHz Wi-Fi SSID and password (C string
+literals). This file is ignored by Git. Do not put credentials in the example.
+The default TCP port is 4242. With no local configuration, the firmware builds
+and runs with Wi-Fi disabled and USB available. Credentials are embedded in the
+compiled firmware, so keep configured UF2 files private.
+
+Use a normal WPA2-compatible home network or hotspot. Put the laptop on the
+same LAN; guest/client isolation can prevent connections. The laptop can be on
+a different Wi-Fi band if both bands share the LAN. No internet is required.
+
+## Build for Pico 2 W
+
+Install Pico SDK 2.x with its submodules, CMake, a complete Arm embedded GCC
+toolchain and picotool (the Pico VS Code extension can install these).
 
 ```sh
-cmake -S . -B build-pico2 -DPICO_BOARD=pico2
-cmake --build build-pico2 -j4
+cmake -S . -B build-pico2-w -DPICO_BOARD=pico2_w \
+  -DPICO_SDK_PATH=/path/to/pico-sdk \
+  -DPICO_TOOLCHAIN_PATH=/path/to/arm-toolchain
+cmake --build build-pico2-w -j4
 ```
 
-The result is `pico_imu_test.uf2` in the selected build directory. Use the build
-for your exact board. If GCC reports missing `nosys.specs`, select a complete
-Arm embedded toolchain with `-DPICO_TOOLCHAIN_PATH=/path/to/toolchain` in a fresh
-build directory; this indicates a toolchain installation issue.
+This repository defaults new build directories to `pico2_w`. Existing build
+folders retain their board selection: `pico2` is not the wireless board target.
+Explicit `pico` and `pico2` builds remain USB-only. On this laptop the configured
+`build-pico2-w` directory uses SDK 2.2.0 and Arm GCC 13.2.1. After editing Wi-Fi
+credentials, rebuild that directory with the second command above.
 
-## Flash and view
+## Flash and connect
 
-Both board builds were successfully compiled locally with Pico SDK 2.2.0 and
-Arm GCC 13.2.1. Ready-to-flash files are in `build-pico-sdk/pico_imu_test.uf2`
-and `build-pico2-sdk/pico_imu_test.uf2`. These have not been tested on hardware.
-To rebuild those already configured directories on this computer:
+1. Hold BOOTSEL while connecting the board with a USB data cable.
+2. Copy `build-pico2-w/pico_imu_test.uf2` to the drive that appears.
+3. Open USB serial at 115200 baud with DTR enabled. Reset the board while the
+   terminal is open if you missed startup output, or find its IP in your router's
+   DHCP client list. A successful connection prints `Wi-Fi ready: <IP> TCP port 4242`.
+4. Start the viewer from its directory:
 
-```sh
-cmake --build build-pico-sdk -j4
-cmake --build build-pico2-sdk -j4
-```
+   ```sh
+   python3 imu_viewer.py --host 192.168.1.123 --record readings.txt
+   ```
 
-1. Hold BOOTSEL while connecting the Pico to your computer with a USB data cable.
-2. Copy the appropriate `pico_imu_test.uf2` onto the USB drive that appears.
-3. After it reboots, open its USB serial port in a serial monitor. Choose 115200
-   baud if asked (USB CDC does not use a physical UART baud rate).
-4. The program waits for the serial terminal connection before starting detection.
-   On macOS the port is usually `/dev/cu.usbmodem...`; Linux usually
-   `/dev/ttyACM0`; Windows uses a COM port. Disable hardware flow control and
-   enable DTR if your terminal requires it for the USB connection.
+   Replace the example IP with the Pico's address. Install viewer dependencies
+   first as described in [viewer/README.md](viewer/README.md).
+5. For USB instead, use `python3 imu_viewer.py --port /dev/cu.usbmodem...`.
+   Close other programs reading that USB port first.
 
-Startup should show:
+Once configured, power the Pico from a USB supply to use it without the laptop
+cable. A DHCP reservation in your router keeps its IP stable.
 
-```text
-TCA9548A detected
-IMU 1 detected on channel 0 (address 0x68)
-IMU 2 detected on channel 1 (address 0x68)
-IMU 3 detected on channel 2 (address 0x68)
-```
+## USB setup pause
 
-Each update prints six labeled integers per IMU:
+On a wireless board, USB IMU output starts **paused** so Wi-Fi messages stay
+visible. Opening the USB serial monitor prints the current network status,
+including the IP if connected, even if you missed startup. Send these commands
+(type the letter and use Send/Enter if your monitor requires it):
 
-```text
-IMU 1:
-  Accel X: 120
-  Accel Y: -85
-  Accel Z: 16300
-  Gyro X:  15
-  Gyro Y:  -20
-  Gyro Z:  8
-```
+- `w`: show Wi-Fi status and IP address.
+- `s`: resume USB IMU readings.
+- `p`: pause USB IMU readings again.
 
-These example numbers are illustrative, not measured. At rest, the gyro should
-be near zero with some bias/noise. Acceleration includes gravity: with an axis
-vertical it should be roughly +16384 or -16384 at the configured +/-2 g range.
-Tilt or rotate one sensor at a time; its readings should respond independently.
-The sensors are polled sequentially, not sampled simultaneously.
+Sensor acquisition and Wi-Fi streaming continue during a USB output pause.
+The Python USB viewer sends `s` automatically when it opens the port.
+Non-wireless Pico builds retain their default automatic USB streaming.
 
-## How it works and errors
+## Hotspot troubleshooting
 
-`main.c` sets up I2C0 at 100 kHz on GP0/GP1. It disables all mux channels and
-checks control-byte readback. Selecting a channel writes `1 << channel` to the
-mux: `0x01`, `0x02`, or `0x04`. Only one sensor is connected to the upstream bus
-at a time, avoiding address collisions.
+The USB monitor reports network-not-found, authentication failure, and waiting
+for a DHCP address separately. Send `w` to repeat the current status. A failure
+code is a diagnostic clue, not proof of a particular cause.
 
-For each channel, the program reads WHO_AM_I, resets and wakes the MPU6050,
-and selects +/-2 g and +/-250 degrees/s ranges. A 14-byte burst starting at
-`0x3B` contains acceleration, temperature and gyro registers. Temperature is
-skipped; each axis is decoded as a signed 16-bit value. The device's default
-internal signal path is retained; no additional filtering is configured.
+For an iPhone, enable Allow Others to Join and Maximize Compatibility (if
+available) under Settings > Personal Hotspot. Keep that screen open while
+connecting. Maximize Compatibility enables 2.4 GHz and WPA2 Personal.
+For Android, choose a 2.4 GHz hotspot band and WPA2 security if those options
+are available. The Pico 2 W cannot connect to a 5 GHz-only hotspot.
+Make sure the hotspot name/password match `wifi_config.h` exactly, then rebuild
+and flash after any credential changes. Connect the laptop to the same hotspot.
 
-Every I2C operation has a timeout and its result is checked. A missing mux is
-retried once per second. An IMU missing or failing initialization is marked
-unavailable while other sensors continue; fix wiring with power off, then restart
-to repeat discovery. Runtime read errors are reported and retried next update.
-Old or uninitialized data is never printed as a successful reading.
+References: [Apple hotspot troubleshooting](https://support.apple.com/en-us/119837),
+[Apple hotspot compatibility](https://support.apple.com/en-ca/guide/security/secfd166f620/web).
 
-This targets the MPU6050 register map and WHO_AM_I value `0x68`. A module sold
-as “MPU6050-style” may contain a different chip: if an identity mismatch is
-reported, check the actual chip before changing the identity check. A downstream
-short holding the bus LOW may affect all sensors and require a mux hardware
-reset or power cycle; timeouts do not repair electrical faults.
+## Streaming behavior
 
-## References
+Wi-Fi connects asynchronously and retries every 30 seconds while offline. USB
+and sensor acquisition continue during connection attempts. The main loop
+services the Pico SDK's polling network stack frequently. One TCP viewer is
+accepted at a time; additional connections are closed. A slow client whose
+send buffer fills is disconnected instead of blocking sensor acquisition.
+The viewer expires readings after two seconds and reports a closed connection;
+restart it to reconnect. A silent network outage may initially show stale data
+until TCP detects the failure. There is no offline storage or replay: samples
+acquired while disconnected are not recorded on the laptop.
 
-- [TI TCA9548A datasheet](https://www.ti.com/lit/ds/symlink/tca9548a.pdf)
-- [TDK/InvenSense MPU6000/MPU6050 register map](https://invensense.tdk.com/wp-content/uploads/2015/02/MPU-6000-Register-Map.pdf)
-- [Raspberry Pi SDK setup](https://www.raspberrypi.com/documentation/microcontrollers/c_sdk.html)
-- [Pico SDK I2C API](https://www.raspberrypi.com/documentation/pico-sdk/hardware.html#hardware_i2c)
+`--record` appends raw received text, including acceleration, gyro, temperature,
+and errors. It does not add timestamps or convert the stream to CSV. TCP carries
+plain text without authentication or encryption; use a trusted local network.
+
+Firmware compilation and desktop loopback tests do not verify physical sensor
+wiring, RF performance, or your access point. Those need a board test.
+
+Reference: [Pico SDK networking and polling API](https://www.raspberrypi.com/documentation/pico-sdk/networking.html).
