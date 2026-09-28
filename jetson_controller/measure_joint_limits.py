@@ -76,7 +76,8 @@ def main():
 
     robot = make_follower(args.port, args.id)
     if not robot.calibration:
-        raise RuntimeError("No saved motor calibration for this ID. Run lerobot-calibrate first.")
+        raise RuntimeError("No saved motor calibration for this ID. Use the ID of your existing calibration.")
+    print(f"Physical joint motor IDs: {config.ROBOT_MOTOR_IDS}")
     print("Support the arm: recording disables torque. Move each joint by hand, one at a time.")
     print("Stay within unobstructed travel; do not force stops or twist wrist cables.")
     print("Units: arm joints in degrees; gripper in 0-100. This sends no movement targets.")
@@ -85,7 +86,7 @@ def main():
         robot.bus.connect()
         robot.bus.disable_torque()
         if not robot.is_calibrated:
-            raise RuntimeError("Saved calibration differs from motor calibration. Run lerobot-calibrate first.")
+            raise RuntimeError("Saved calibration differs from the motors. Check the ID and existing calibration file.")
         print("Recording ALL six joints. Press Enter when finished; Ctrl+C aborts without saving.")
         extrema = record_ranges(robot.bus)
     finally:
@@ -95,6 +96,7 @@ def main():
     limits = padded_limits(extrema, args.margin_deg, args.margin_gripper)
     report = {
         "robot_id": args.id,
+        "motor_ids": dict(config.ROBOT_MOTOR_IDS),
         "arm_units": "degrees",
         "gripper_units": "0-100",
         "observed_ranges": extrema,

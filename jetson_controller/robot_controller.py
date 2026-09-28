@@ -7,9 +7,32 @@ tested on machines that do not have LeRobot installed.
 from __future__ import annotations
 
 from typing import Any
+from dataclasses import replace
 import math
 
 import config
+
+
+def apply_motor_mapping(robot):
+    bus = robot.bus
+    motor_ids = config.ROBOT_MOTOR_IDS
+    if set(motor_ids) != set(bus.motors):
+        raise ValueError("ROBOT_MOTOR_IDS must name every follower joint")
+    if any(type(motor_id) is not int or not 1 <= motor_id <= 253 for motor_id in motor_ids.values()):
+        raise ValueError("ROBOT_MOTOR_IDS must contain integer IDs from 1 to 253")
+    if len(set(motor_ids.values())) != len(motor_ids):
+        raise ValueError("ROBOT_MOTOR_IDS must contain unique IDs")
+    motors = {joint: replace(motor, id=motor_ids[joint]) for joint, motor in bus.motors.items()}
+    calibration = {}
+    if robot.calibration:
+        calibration_by_id = {entry.id: entry for entry in robot.calibration.values()}
+        if len(calibration_by_id) != len(robot.calibration) or set(calibration_by_id) != set(motor_ids.values()):
+            raise ValueError("Saved calibration must contain exactly one entry for each configured motor ID")
+        calibration = {joint: replace(calibration_by_id[motor.id]) for joint, motor in motors.items()}
+    robot.bus = type(bus)(port=bus.port, motors=motors, calibration=calibration,
+                          protocol_version=bus.protocol_version)
+    robot.calibration = calibration
+    return robot
 
 
 def make_follower(port: str, robot_id: str, max_relative_target=None):
@@ -22,10 +45,11 @@ def make_follower(port: str, robot_id: str, max_relative_target=None):
             raise RuntimeError(
                 "Activate your LeRobot environment with SO101Follower and Feetech support."
             ) from exc
-    return SO101Follower(SO101FollowerConfig(
+    robot = SO101Follower(SO101FollowerConfig(
         port=port, id=robot_id, use_degrees=True,
         max_relative_target=max_relative_target, disable_torque_on_disconnect=True,
     ))
+    return apply_motor_mapping(robot)
 
 
 class RobotController:
@@ -46,11 +70,11 @@ class RobotController:
             for joint in config.ROBOT_JOINTS
         })
         if not self.robot.calibration:
-            raise RuntimeError("Run lerobot-calibrate for this ROBOT_ID before live mode.")
+            raise RuntimeError("No saved calibration for ROBOT_ID; use the ID of your existing motor calibration.")
         self.robot.bus.connect()
         self.robot.bus.disable_torque()
         if not self.robot.is_calibrated:
-            raise RuntimeError("Robot calibration does not match the motors. Run lerobot-calibrate first.")
+            raise RuntimeError("Saved calibration does not match the motors. Check ROBOT_ID and the existing calibration file.")
         start_pose = self.get_current_pose()
         for joint, value in start_pose.items():
             low, high = config.JOINT_LIMITS[joint]
@@ -60,6 +84,7 @@ class RobotController:
         self.robot.configure()
         self.action_features = getattr(self.robot, "action_features", None)
         print("Connected to SO-101 follower.")
+        print(f"Physical joint motor IDs: {config.ROBOT_MOTOR_IDS}")
         self.print_feature_info()
 
     def print_feature_info(self) -> None:

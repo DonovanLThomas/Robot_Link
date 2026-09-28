@@ -118,8 +118,10 @@ class MotionTests(unittest.TestCase):
     def test_follower_uses_explicit_units_and_hardware_relative_limit(self):
         module = Mock()
         with patch.dict("sys.modules", {"lerobot": Mock(), "lerobot.robots": Mock(),
-                                        "lerobot.robots.so_follower": module}):
+                                        "lerobot.robots.so_follower": module}), \
+             patch("robot_controller.apply_motor_mapping", side_effect=lambda robot: robot) as mapping:
             make_follower("/dev/robot", "ladon", 0.25)
+        mapping.assert_called_once_with(module.SO101Follower.return_value)
         module.SO101FollowerConfig.assert_called_once_with(
             port="/dev/robot", id="ladon", use_degrees=True,
             max_relative_target=0.25, disable_torque_on_disconnect=True)

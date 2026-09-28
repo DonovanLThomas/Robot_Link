@@ -5,6 +5,14 @@ pipeline. USB serial is the default transport; no Wi-Fi or IP address is needed.
 For motor calibration, joint-limit measurement, and first live movement, follow
 [the step-by-step live-mode guide](LIVE_MODE.md).
 
+This arm has swapped motor IDs: physical **wrist roll = 6**, **gripper = 5**.
+`ROBOT_MOTOR_IDS` in `config.py` applies to both movement and range measurement.
+The adapter rebuilds the LeRobot bus mapping and associates saved calibration
+entries by motor ID in memory. It does not rewrite IDs or calibration files.
+Joint names always mean the physical joints: wrist roll uses degrees and the
+gripper uses 0–100 units. Use these repo scripts for the swapped arm; standalone
+LeRobot commands use their own default mapping.
+
 The current default is mapping dry run:
 
 - `MODE = 2` (use `--mode 1` for input only)

@@ -16,6 +16,14 @@ UDP_PORT = 5005
 
 ROBOT_ID = "ladon"
 ROBOT_PORT = ""  # Fill in after checking /dev/serial/by-id or lerobot discovery.
+ROBOT_MOTOR_IDS = {
+    "shoulder_pan": 1,
+    "shoulder_lift": 2,
+    "elbow_flex": 3,
+    "wrist_flex": 4,
+    "wrist_roll": 6,
+    "gripper": 5,
+}
 
 CONTROL_HZ = 30.0
 DIAGNOSTICS_HZ = 5.0

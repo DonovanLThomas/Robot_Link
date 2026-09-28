@@ -36,35 +36,37 @@ is missing, install the extra into the same active Python environment:
 python3 -m pip install -e '/home/dontech/lerobot[feetech]'
 ```
 
-## 3. Calibrate the robot motors if needed
+## 3. Reuse the existing calibration with the swapped motor IDs
 
-The IMU neutral calibration from Mode 2 does not calibrate the robot motors.
-If the follower already has a valid LeRobot calibration, reuse that robot ID
-and skip recalibration. The project uses `ROBOT_ID = "ladon"`; change it if your
-existing calibration uses another ID.
+Your physical wrist-roll motor has ID **6** and the gripper has ID **5**.
+`ROBOT_MOTOR_IDS` in `config.py` now reflects this. Shoulder pan, shoulder lift,
+elbow flex, and wrist flex remain IDs 1–4. Do not swap the IMU packet fields,
+`JOINT_LIMITS` names, or command-line `--joint` names: these describe physical joints.
 
-For a follower whose motor IDs are already set up, use the official workflow:
+No motor-ID reconfiguration or motor recalibration is required by this change.
+Reuse the ID of your existing saved LeRobot calibration (`ladon` by default).
+The repo reads those entries by their motor IDs and remaps their names only
+in memory, retaining the existing offsets and encoder ranges. Calibration files
+and programmed motor IDs are not modified. A missing or mismatched calibration
+still stops execution; check the existing robot ID/file instead of bypassing it.
 
-```sh
-lerobot-calibrate \
-  --robot.type=so101_follower \
-  --robot.port=/dev/ttyACM1 \
-  --robot.id=ladon
-```
+Both live control and the measurement script use the corrected mapping,
+including wrist-roll degree conversion and gripper 0–100 conversion. The
+gripper's 0–100 scale is relative to its retained calibration range and may not
+span its full physical open/close travel. Measure its actual usable range below.
+Old joint-limit reports made before this correction must be measured again;
+simply swapping their labels would mix degree and normalized units.
 
-Follow the terminal prompts and the
-[official calibration video](https://huggingface.co/docs/lerobot/so101#calibration-video):
-place the arm in the illustrated middle pose, then move the requested joints
-by hand through their travel. Keep the base secured and support the links when
-torque is disabled. Do not force a joint past an obstruction or twist cables.
-Use this same robot ID for measurement and live operation.
+Skip the stock `lerobot-calibrate` command previously shown for this arm.
+Standalone LeRobot tools do not read this repo's custom mapping. Keep the base
+secured and support the links during torque-off measurements.
 
 ## 4. Measure the minimum and maximum of each joint
 
 ```sh
 python3 jetson_controller/measure_joint_limits.py \
   --port /dev/ttyACM1 --id ladon \
-  --output joint_limits.json
+  --output joint_limits_swapped.json
 ```
 
 1. Support the arm and press Enter to begin. Torque is disabled.
