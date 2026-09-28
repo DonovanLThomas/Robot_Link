@@ -1,12 +1,16 @@
 """Configuration for IMU-to-SO-101 teleoperation.
 
 Start with MODE = 1 or MODE = 2 and DRY_RUN = True. Do not enable live motion
-until UDP packets, signs, gains, neutral calibration, and joint limits are
+until IMU packets, signs, gains, neutral calibration, and joint limits are
 verified with the arm powered and supported safely.
 """
 
 MODE = 1
 DRY_RUN = True
+
+IMU_TRANSPORT = "serial"
+IMU_SERIAL_PORT = "/dev/ttyACM0"
+IMU_SERIAL_BAUD = 115200
 
 UDP_BIND_IP = "0.0.0.0"
 UDP_PORT = 5005
