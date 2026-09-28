@@ -1,15 +1,21 @@
 # Three MPU6050s over USB and Wi-Fi
 
 C firmware for a Raspberry Pi Pico 2 W reads three MPU6050s through a TCA9548A
-multiplexer. Human-readable records are printed about twice per second. Each
+multiplexer. USB serial teleoperation JSON is enabled by default, with Wi-Fi
+disabled. Plug the Pico into the Jetson using a USB data cable; no network,
+credentials, or IP address is required. See the
+[Jetson setup](../jetson_controller/README.md#run-on-the-jetson).
+
+Optional human-readable records are printed about twice per second. Each
 record contains acceleration in g, gyroscope readings in degrees/second, and
 temperature in Celsius. The same records can go to USB serial and one connected
 TCP client. Acquisition starts without a USB terminal, so the board can run from
 a USB power supply.
 
-An optional UDP teleoperation stream can also send standardized human joint
-fields to the Jetson at about 30-50 Hz. This UDP stream is separate from the
-existing USB/TCP viewer stream.
+Standardized human joint fields stream over USB at up to about 40 Hz whenever
+the serial port is open and all three sensors read successfully. An optional
+UDP stream sends the same JSON. The `s`/`p` commands control only raw sensor
+text; JSON continues independently.
 
 The [Python viewer](viewer/README.md) displays the acceleration readings as a
 triangle or 3D vectors and can save the received stream. These readings are not
@@ -40,6 +46,9 @@ a restart after fixing wiring; runtime read errors are retried each cycle.
 
 ## Configure Wi-Fi
 
+This section is optional. Wi-Fi is only compiled in when CMake is configured
+with `-DIMU_ENABLE_WIFI=ON`; USB serial needs no `wifi_config.h`.
+
 From this directory:
 
 ```sh
@@ -61,7 +70,7 @@ To enable Jetson teleoperation packets in your local ignored `wifi_config.h`:
 #define TELEOP_SEND_PERIOD_MS 25
 ```
 
-The current UDP JSON packet is:
+The USB serial and optional UDP JSON packet is:
 
 ```json
 {
@@ -92,7 +101,7 @@ Install Pico SDK 2.x with its submodules, CMake, a complete Arm embedded GCC
 toolchain and picotool (the Pico VS Code extension can install these).
 
 ```sh
-cmake -S . -B build-pico2-w -DPICO_BOARD=pico2_w \
+cmake -S . -B build-pico2-w -DPICO_BOARD=pico2_w -DIMU_ENABLE_WIFI=OFF \
   -DPICO_SDK_PATH=/path/to/pico-sdk \
   -DPICO_TOOLCHAIN_PATH=/path/to/arm-toolchain
 cmake --build build-pico2-w -j4
@@ -102,16 +111,25 @@ This repository defaults new build directories to `pico2_w`. Existing build
 folders retain their board selection: `pico2` is not the wireless board target.
 Explicit `pico` and `pico2` builds remain USB-only. On this laptop the configured
 `build-pico2-w` directory uses SDK 2.2.0 and Arm GCC 13.2.1. After editing Wi-Fi
-credentials, rebuild that directory with the second command above.
+credentials for an optional Wi-Fi build, configure with `-DIMU_ENABLE_WIFI=ON`
+and rebuild. For the existing build on this laptop, USB-only firmware is built
+from the repository root with:
+
+```sh
+cmake -S pico_imu_test -B pico_imu_test/build-pico2-w -DIMU_ENABLE_WIFI=OFF
+cmake --build pico_imu_test/build-pico2-w -j4
+```
 
 ## Flash and connect
 
 1. Hold BOOTSEL while connecting the board with a USB data cable.
 2. Copy `build-pico2-w/pico_imu_test.uf2` to the drive that appears.
-3. Open USB serial at 115200 baud with DTR enabled. Reset the board while the
-   terminal is open if you missed startup output, or find its IP in your router's
-   DHCP client list. A successful connection prints `Wi-Fi ready: <IP> TCP port 4242`.
-4. Start the viewer from its directory:
+3. For Jetson teleoperation, connect the Pico to the Jetson and run the
+   [serial controller](../jetson_controller/README.md#run-on-the-jetson).
+   Alternatively, open USB serial at 115200 baud with DTR enabled to see JSON.
+   Optional Wi-Fi builds also print `Wi-Fi ready: <IP> TCP port 4242` on connection.
+4. For raw sensor visualization instead of the Jetson controller, start the
+   viewer from its directory (only one program should open USB serial at once):
 
    ```sh
    python3 imu_viewer.py --host 192.168.1.123 --record readings.txt
@@ -127,14 +145,14 @@ cable. A DHCP reservation in your router keeps its IP stable.
 
 ## USB setup pause
 
-On a wireless board, USB IMU output starts **paused** so Wi-Fi messages stay
-visible. Opening the USB serial monitor prints the current network status,
-including the IP if connected, even if you missed startup. Send these commands
+USB raw IMU output starts **paused**; teleoperation JSON starts automatically.
+Opening the USB serial monitor also prints the network status in optional
+Wi-Fi builds, including the IP if connected. Send these commands
 (type the letter and use Send/Enter if your monitor requires it):
 
 - `w`: show Wi-Fi status and IP address.
-- `s`: resume USB IMU readings.
-- `p`: pause USB IMU readings again.
+- `s`: resume USB raw IMU readings.
+- `p`: pause USB raw IMU readings again (teleoperation JSON continues).
 
 Sensor acquisition and Wi-Fi streaming continue during a USB output pause.
 The Python USB viewer sends `s` automatically when it opens the port.

@@ -27,19 +27,14 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// Leave the wireless board's USB terminal quiet during network setup.
-#ifdef IMU_WIFI
 static bool usb_streaming = false;
-#else
-static bool usb_streaming = true;
-#endif
 
 static void service_connections(void) {
     static bool usb_was_connected = false;
     wifi_stream_poll();
     bool usb_connected = stdio_usb_connected();
     if (usb_connected && !usb_was_connected) {
-        printf("\nUSB IMU output %s. Commands: s = stream, p = pause, w = Wi-Fi status.\n",
+        printf("\nUSB raw IMU output %s. Teleop JSON enabled. Commands: s = stream, p = pause, w = Wi-Fi status.\n",
                usb_streaming ? "running" : "paused");
         wifi_stream_status();
     }
@@ -155,6 +150,7 @@ static void send_teleop_packet(const HumanJointState *joints) {
         joints->wrist_roll);
 
     if (length > 0 && (size_t)length < sizeof(packet)) {
+        if (stdio_usb_connected()) printf("%s", packet);
         teleop_udp_send(packet, (size_t)length);
     }
 }
