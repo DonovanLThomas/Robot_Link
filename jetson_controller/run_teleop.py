@@ -167,6 +167,9 @@ def validate_config() -> None:
     if not all(math.isfinite(value) and value > 0 for value in
                (config.MAX_STEP_DEG, config.MAX_STEP_GRIPPER)):
         raise SystemExit("MAX_STEP_DEG and MAX_STEP_GRIPPER must be finite and positive")
+    if not all(math.isfinite(value) and value >= 0 for value in
+               (config.MIN_COMMAND_DELTA_DEG, config.MIN_COMMAND_DELTA_GRIPPER)):
+        raise SystemExit("MIN_COMMAND_DELTA_DEG and MIN_COMMAND_DELTA_GRIPPER must be finite and non-negative")
     for joint in config.ROBOT_JOINTS:
         low, high = config.JOINT_LIMITS[joint]
         if not math.isfinite(low) or not math.isfinite(high) or low >= high:

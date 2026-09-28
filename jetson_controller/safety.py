@@ -37,6 +37,14 @@ class SafetyLimiter:
         for joint in config.ROBOT_JOINTS:
             delta = limited[joint] - self.current_command[joint]
             max_step = config.MAX_STEP_GRIPPER if joint == "gripper" else config.MAX_STEP_DEG
+            min_delta = (
+                config.MIN_COMMAND_DELTA_GRIPPER
+                if joint == "gripper"
+                else config.MIN_COMMAND_DELTA_DEG
+            )
+            if abs(delta) < min_delta:
+                safe[joint] = self.current_command[joint]
+                continue
             step = clamp(delta, -max_step, max_step)
             safe[joint] = self.current_command[joint] + step
 

@@ -1,11 +1,11 @@
 """Configuration for IMU-to-SO-101 teleoperation.
 
-Start with MODE = 1 or MODE = 2 and DRY_RUN = True. Do not enable live motion
-until IMU packets, signs, gains, neutral calibration, and joint limits are
-verified with the arm powered and supported safely.
+For a new or changed setup, start with MODE = 1 or MODE = 2 and DRY_RUN = True.
+Do not enable live motion until IMU packets, signs, gains, neutral calibration,
+and joint limits are verified with the arm powered and supported safely.
 """
-MODE = 2
-DRY_RUN = True
+MODE = 3
+DRY_RUN = False
 
 IMU_TRANSPORT = "serial"
 IMU_SERIAL_PORT = "/dev/ttyACM0"
@@ -91,15 +91,19 @@ SIGNS = {
 JOINT_LIMITS_VERIFIED = True
 JOINT_LIMITS = {
     "shoulder_pan": (-100.0, 100.0),
-    "shoulder_lift": (-100.0, 100.0),
-    "elbow_flex": (-90.0, 90.0),
-    "wrist_flex": (-100.0, 100.0),
-    "wrist_roll": (-8.0, 90.0),
+    "shoulder_lift": (-104.4, 100.0),
+    "elbow_flex": (-90.0, 99.0),
+    "wrist_flex": (-112.0, 100.0),
+    "wrist_roll": (-170.0, 170.0),
     "gripper": (0.0, 100.0),
 }
 
-MAX_STEP_DEG = 1.0
+MAX_STEP_DEG = 2.5
 MAX_STEP_GRIPPER = 1.0
+# Ignore target changes smaller than this after mapping/filtering/limits.
+# This is a robot-side movement threshold in degrees, useful for sensitive IMUs.
+MIN_COMMAND_DELTA_DEG = 1.0
+MIN_COMMAND_DELTA_GRIPPER = 1.0
 DEADBAND_DEG = {
     "shoulder_pan": 2.0,
     "shoulder_lift": 2.0,

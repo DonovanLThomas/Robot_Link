@@ -30,8 +30,11 @@ physical positions or distances between the sensors.
 | GP0 (physical pin 1) | SDA |
 | GP1 (physical pin 2) | SCL |
 
-Connect IMUs 1–3 to mux channels 0–2 respectively (SD0/SC0, SD1/SC1,
-SD2/SC2). All modules share ground and compatible 3.3 V power.
+Connect the IMUs to mux channels 0–2 (SD0/SC0, SD1/SC1, SD2/SC2). This repo's
+teleop firmware currently treats channel 1 as the shoulder IMU, channel 0 as
+the upper-arm IMU, and channel 2 as the forearm IMU, matching the swapped
+channel-0/channel-1 wiring on this arm. All modules share ground and compatible
+3.3 V power.
 
 - Mux A0/A1/A2 must be LOW for address `0x70`; RESET must stay HIGH.
 - Each MPU6050 AD0 must be LOW for address `0x68`.
@@ -88,8 +91,8 @@ The first implementation derives these fields from the existing accel readings:
 `shoulder_pan` is held at zero because an MPU6050 accelerometer/gyro alone does
 not provide reliable yaw, `shoulder_lift` and wrist fields use relative accel
 tilt estimates, and `elbow_flex` preserves the existing triangle-angle
-experiment at IMU 2. Treat these as a stable networking/mapping contract, not
-finished orientation fusion.
+experiment at the upper-arm IMU. Treat these as a stable networking/mapping
+contract, not finished orientation fusion.
 
 Use a normal WPA2-compatible home network or hotspot. Put the laptop on the
 same LAN; guest/client isolation can prevent connections. The laptop can be on

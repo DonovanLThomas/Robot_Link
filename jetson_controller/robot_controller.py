@@ -57,6 +57,7 @@ class RobotController:
         self.dry_run = dry_run
         self.robot: Any | None = None
         self.action_features: Any | None = None
+        self._disable_torque_on_disconnect = False
 
     def connect(self) -> None:
         if self.dry_run:
@@ -65,6 +66,7 @@ class RobotController:
         if not config.ROBOT_PORT:
             raise RuntimeError("Set ROBOT_PORT in jetson_controller/config.py before live mode.")
 
+        self._disable_torque_on_disconnect = False
         self.robot = make_follower(config.ROBOT_PORT, config.ROBOT_ID, {
             joint: config.MAX_STEP_GRIPPER if joint == "gripper" else config.MAX_STEP_DEG
             for joint in config.ROBOT_JOINTS
@@ -81,6 +83,7 @@ class RobotController:
             if not low <= value <= high:
                 raise ValueError(f"Place {joint} inside [{low}, {high}] before live mode; measured {value}")
         self.robot.bus.sync_write("Goal_Position", start_pose)
+        self._disable_torque_on_disconnect = True
         self.robot.configure()
         self.action_features = getattr(self.robot, "action_features", None)
         print("Connected to SO-101 follower.")
@@ -142,9 +145,20 @@ class RobotController:
 
     def disconnect(self) -> None:
         if self.robot is not None:
-            if self.robot.bus.is_connected:
-                self.robot.bus.disconnect(disable_torque=True)
-            self.robot = None
+            try:
+                if self.robot.bus.is_connected:
+                    try:
+                        self.robot.bus.disconnect(
+                            disable_torque=self._disable_torque_on_disconnect
+                        )
+                    except ConnectionError as exc:
+                        if self._disable_torque_on_disconnect:
+                            print(f"Warning: could not disable motor torque during disconnect: {exc}")
+                        if self.robot.bus.is_connected:
+                            self.robot.bus.disconnect(disable_torque=False)
+            finally:
+                self.robot = None
+                self._disable_torque_on_disconnect = False
 
     def _read_observation(self) -> Any:
         assert self.robot is not None

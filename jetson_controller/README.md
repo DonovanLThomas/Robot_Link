@@ -13,13 +13,12 @@ Joint names always mean the physical joints: wrist roll uses degrees and the
 gripper uses 0–100 units. Use these repo scripts for the swapped arm; standalone
 LeRobot commands use their own default mapping.
 
-The current default is mapping dry run:
+The current default is live mode for your verified setup:
 
-- `MODE = 2` (use `--mode 1` for input only)
-- `DRY_RUN = True`
-- no LeRobot import
-- no robot connection
-- no motor commands
+- `MODE = 3`
+- `DRY_RUN = False`
+- `ROBOT_PORT` still must be supplied before live movement
+- `JOINT_LIMITS_VERIFIED = True`
 
 The intended progression is:
 
@@ -72,7 +71,9 @@ Important fields:
 - `*_GAIN` and `*_SIGN`: tune after neutral calibration.
 - `JOINT_LIMITS`: conservative placeholders; replace with verified safe values.
 - `JOINT_LIMITS_VERIFIED`: must be `True` before live Mode 3 can run.
-- `MAX_STEP_DEG`, `DEADBAND_DEG`, `LOW_PASS_ALPHA`: safety and smoothing.
+- `MAX_STEP_DEG`, `MIN_COMMAND_DELTA_DEG`, `DEADBAND_DEG`, `LOW_PASS_ALPHA`:
+  safety and smoothing. `MIN_COMMAND_DELTA_DEG` is the robot-side movement
+  threshold; target changes below it hold the last arm command to reduce jitter.
 
 Arm positions use degrees (`use_degrees=True` in LeRobot). The gripper uses
 LeRobot's normalized 0–100 units. `FIXED_GRIPPER_POSITION = None` holds the

@@ -27,6 +27,11 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#define SHOULDER_IMU_CHANNEL 1
+#define UPPER_ARM_IMU_CHANNEL 0
+#define FOREARM_IMU_CHANNEL 2
+#define IMU_CHANNEL_COUNT 3
+
 static bool usb_streaming = false;
 
 static void service_connections(void) {
@@ -225,7 +230,7 @@ static int16_t combine_bytes(uint8_t high, uint8_t low) {
 }
 
 bool read_imu(uint8_t channel, IMUData *imu) {
-    if (imu == NULL || channel > 2) {
+    if (imu == NULL || channel >= IMU_CHANNEL_COUNT) {
         return false;
     }
 
@@ -300,11 +305,15 @@ int main(void) {
 
     printf("\nTHREE MPU6050 IMU TEST\n");
     printf("I2C0 initialized: SDA = GP%d, SCL = GP%d\n\n", SDA_PIN, SCL_PIN);
+    printf("Teleop roles: shoulder=channel %u, upper_arm=channel %u, forearm=channel %u.\n",
+           (unsigned int)SHOULDER_IMU_CHANNEL,
+           (unsigned int)UPPER_ARM_IMU_CHANNEL,
+           (unsigned int)FOREARM_IMU_CHANNEL);
 
-    bool initialized[3] = {false, false, false};
+    bool initialized[IMU_CHANNEL_COUNT] = {false};
 
     // Each MPU6050 must be woken while its own mux channel is selected.
-    for (uint8_t channel = 0; channel < 3; channel++) {
+    for (uint8_t channel = 0; channel < IMU_CHANNEL_COUNT; channel++) {
         if (!mux_select_channel(channel)) {
             printf("ERROR: Could not select mux channel %u.\n",
                    (unsigned int)channel);
@@ -325,9 +334,7 @@ int main(void) {
     // Allow all successfully awakened sensors time to start.
     sleep_ms(100);
 
-    IMUData imu1 = {0};
-    IMUData imu2 = {0};
-    IMUData imu3 = {0};
+    IMUData imu_by_channel[IMU_CHANNEL_COUNT] = {0};
 
     absolute_time_t next_sample = get_absolute_time();
     absolute_time_t next_raw_text = get_absolute_time();
@@ -341,21 +348,28 @@ int main(void) {
 
         // Each read has its own result; a failure does not skip other IMUs.
         // Do not report samples from an IMU that failed to wake at startup.
-        bool ok1 = initialized[0] && read_imu(0, &imu1);
-        bool ok2 = initialized[1] && read_imu(1, &imu2);
-        bool ok3 = initialized[2] && read_imu(2, &imu3);
+        bool ok_by_channel[IMU_CHANNEL_COUNT];
+        for (uint8_t channel = 0; channel < IMU_CHANNEL_COUNT; channel++) {
+            ok_by_channel[channel] = initialized[channel] &&
+                read_imu(channel, &imu_by_channel[channel]);
+        }
 
-        if (ok1 && ok2 && ok3) {
+        if (ok_by_channel[SHOULDER_IMU_CHANNEL] &&
+            ok_by_channel[UPPER_ARM_IMU_CHANNEL] &&
+            ok_by_channel[FOREARM_IMU_CHANNEL]) {
             HumanJointState joints =
-                estimate_human_joints_from_current_samples(&imu1, &imu2, &imu3);
+                estimate_human_joints_from_current_samples(
+                    &imu_by_channel[SHOULDER_IMU_CHANNEL],
+                    &imu_by_channel[UPPER_ARM_IMU_CHANNEL],
+                    &imu_by_channel[FOREARM_IMU_CHANNEL]);
             send_teleop_packet(&joints);
         }
 
         if (time_reached(next_raw_text)) {
             if (usb_streaming) printf("========================\n");
-            print_imu(0, &imu1, ok1);
-            print_imu(1, &imu2, ok2);
-            print_imu(2, &imu3, ok3);
+            for (uint8_t channel = 0; channel < IMU_CHANNEL_COUNT; channel++) {
+                print_imu(channel, &imu_by_channel[channel], ok_by_channel[channel]);
+            }
             if (usb_streaming) printf("========================\n");
             next_raw_text = make_timeout_time_ms(RAW_TEXT_PERIOD_MS);
         }

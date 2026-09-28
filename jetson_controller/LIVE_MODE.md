@@ -2,8 +2,9 @@
 
 Run these commands on the Jetson in your existing LeRobot 0.6.2 environment.
 Copy the updated `jetson_controller` folder there first. The Pico firmware does
-not need another update for these steps. The current default stays Mode 2 with
-`DRY_RUN = True` until you explicitly configure live movement.
+need this repo's latest update if your shoulder and upper-arm IMUs are plugged
+into the swapped mux channels. The current default in `config.py` is live mode,
+but live movement still requires a valid `ROBOT_PORT`.
 
 ## 1. Identify both USB devices
 
@@ -108,6 +109,7 @@ JOINT_LIMITS_VERIFIED = True
 
 MAX_STEP_DEG = 0.25
 MAX_STEP_GRIPPER = 0.5
+MIN_COMMAND_DELTA_DEG = 1.0
 FIXED_GRIPPER_POSITION = None
 SHOULDER_LIFT_GAIN = 0.25
 ```
@@ -118,8 +120,11 @@ review; the recorder does not enable live mode for you. Edit the existing gain
 assignment above the `GAINS` dictionary, not an extra assignment at file end.
 
 At 30 Hz, a 0.25-degree target step permits at most 7.5 degrees/second of target
-change. LeRobot also limits each requested target's distance from the measured
-joint position. These are software command limits, not a physical speed guarantee.
+change. `MIN_COMMAND_DELTA_DEG` holds the last command when the mapped robot
+target changes by less than the configured degree threshold, which helps with
+sensitive IMU jitter. LeRobot also limits each requested target's distance from
+the measured joint position. These are software command limits, not a physical
+speed guarantee.
 
 Place the robot inside the configured bounds, with the gripper partly open if
 your inward margins exclude the endpoints. Keep the base secured and workspace

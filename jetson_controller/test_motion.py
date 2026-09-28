@@ -96,9 +96,23 @@ class MotionTests(unittest.TestCase):
         limiter.initialize(start)
         with self.assertRaises(ValueError):
             limiter.apply(dict(start, elbow_flex=float("nan")))
-        result = limiter.apply(dict(start, elbow_flex=999, gripper=999))
+        with patch.object(config, "MIN_COMMAND_DELTA_DEG", 0.0), \
+             patch.object(config, "MIN_COMMAND_DELTA_GRIPPER", 0.0):
+            result = limiter.apply(dict(start, elbow_flex=999, gripper=999))
         self.assertEqual(result["elbow_flex"], config.MAX_STEP_DEG)
         self.assertEqual(result["gripper"], start["gripper"] + config.MAX_STEP_GRIPPER)
+
+    def test_limiter_ignores_small_robot_target_changes(self):
+        limiter = SafetyLimiter()
+        start = dict(config.DRY_RUN_ROBOT_START_POSE)
+        limiter.initialize(start)
+        target = dict(start, elbow_flex=start["elbow_flex"] + 0.75, gripper=start["gripper"] + 0.5)
+        result = limiter.apply(target)
+        self.assertEqual(result["elbow_flex"], start["elbow_flex"])
+        self.assertEqual(result["gripper"], start["gripper"])
+
+        result = limiter.apply(dict(start, elbow_flex=start["elbow_flex"] + 1.25))
+        self.assertEqual(result["elbow_flex"], start["elbow_flex"] + 1.25)
 
     def test_only_selected_joint_moves_and_gripper_holds(self):
         mapper = JointMapper()
@@ -155,6 +169,35 @@ class MotionTests(unittest.TestCase):
             robot.bus.sync_write.assert_called_once_with("Goal_Position", start)
             controller.disconnect()
             robot.bus.disconnect.assert_called_once_with(disable_torque=True)
+
+    def test_failed_startup_disconnect_does_not_touch_motor_torque(self):
+        with patch.object(config, "ROBOT_PORT", "/dev/robot"), \
+             patch("robot_controller.make_follower") as factory:
+            robot = factory.return_value
+            robot.calibration = {"saved": True}
+            robot.bus.is_connected = True
+            robot.bus.disable_torque.side_effect = ConnectionError("no status packet")
+            controller = RobotController(dry_run=False)
+            with self.assertRaises(ConnectionError):
+                controller.connect()
+            controller.disconnect()
+            robot.bus.disconnect.assert_called_once_with(disable_torque=False)
+
+    def test_disconnect_still_closes_bus_if_torque_disable_fails(self):
+        controller = RobotController(dry_run=False)
+        controller.robot = Mock()
+        bus = controller.robot.bus
+        bus.is_connected = True
+        bus.disconnect.side_effect = [ConnectionError("no status packet"), None]
+        controller._disable_torque_on_disconnect = True
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            controller.disconnect()
+        self.assertIn("could not disable motor torque", output.getvalue())
+        self.assertEqual(
+            [call.kwargs for call in bus.disconnect.call_args_list],
+            [{"disable_torque": True}, {"disable_torque": False}],
+        )
+        self.assertIsNone(controller.robot)
 
     def test_bad_start_or_calibration_cannot_enable_torque(self):
         for calibrated in (False, True):
