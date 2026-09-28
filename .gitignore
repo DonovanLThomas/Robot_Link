@@ -1,0 +1,32 @@
+# macOS and editor state
+.DS_Store
+.vscode/
+
+# Python generated files and local environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Pico/CMake build outputs
+build/
+build*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+*.elf
+*.uf2
+*.bin
+*.hex
+*.map
+
+# Local hardware credentials and captured data
+pico_imu_test/wifi_config.h
+readings.txt
+*.log
+
