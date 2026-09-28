@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""USB serial triangle and 3D viewer. See README.md for formats and physical limitations."""
+"""USB serial / Wi-Fi triangle and 3D viewer. See README.md for physical limitations."""
 import argparse
 import itertools
 import math
 import re
+import socket
 import time
 
 NUMBER = r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)"
@@ -44,7 +45,7 @@ class Parser:
 
 
 class LineBuffer:
-    """Keep partial USB reads until newline; discard overlong garbage."""
+    """Keep partial stream reads until newline; discard overlong garbage."""
     def __init__(self):
         self.pending = bytearray()
         self.discard = False
@@ -106,21 +107,50 @@ def triangle_geometry(points):
     return flat, angles
 
 
+class TCPStream:
+    """Nonblocking reads keep the GUI responsive between network packets."""
+    def __init__(self, host, port):
+        self.socket = socket.create_connection((host, port), timeout=5)
+        self.socket.setblocking(False)
+
+    def read(self):
+        try:
+            data = self.socket.recv(65536)
+        except BlockingIOError:
+            return b""
+        if not data:
+            raise OSError("Pico closed the TCP connection")
+        return data
+
+    def close(self):
+        self.socket.close()
+
+
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
-    cli.add_argument("--port", help="USB port, e.g. /dev/cu.usbmodem1101 or COM3")
+    source = cli.add_mutually_exclusive_group()
+    source.add_argument("--port", help="USB port, e.g. /dev/cu.usbmodem1101 or COM3")
+    source.add_argument("--host", help="Pico Wi-Fi IP address")
+    source.add_argument("--demo", action="store_true", help="Show simulated data without hardware")
+    source.add_argument("--list-ports", action="store_true")
+    cli.add_argument("--tcp-port", type=int, default=4242)
+    cli.add_argument("--record", help="Append received raw data to a text file (USB or Wi-Fi)")
     cli.add_argument("--baud", type=int, default=115200)
     cli.add_argument("--mode", choices=("accel", "position"), default="accel")
     cli.add_argument("--view", choices=("triangle", "3d"), default="triangle")
-    cli.add_argument("--list-ports", action="store_true")
-    cli.add_argument("--demo", action="store_true", help="Show simulated data without hardware")
     args = cli.parse_args()
-    if not args.demo:
+    if not 1 <= args.tcp_port <= 65535:
+        cli.error("--tcp-port must be between 1 and 65535")
+    if args.record and (args.demo or args.list_ports):
+        cli.error("--record requires --port or --host")
+    serial_errors = (OSError,)
+    if not args.demo and not args.host:
         try:
             import serial
             from serial.tools import list_ports
         except ImportError:
             cli.exit(1, "Install dependencies: python3 -m pip install -r requirements.txt\n")
+        serial_errors = (serial.SerialException, OSError)
         if args.list_ports:
             ports = list(list_ports.comports())
             for port in ports:
@@ -129,7 +159,7 @@ def main():
                 print("No serial ports found. Check the USB data cable.")
             return
         if not args.port:
-            cli.error("Use --list-ports then --port PORT, or use --demo")
+            cli.error("Use --port PORT, --host PICO_IP, or --demo")
     try:
         import matplotlib.pyplot as plt
         from matplotlib.animation import FuncAnimation
@@ -139,12 +169,25 @@ def main():
     connection = None
     if not args.demo:
         try:
-            connection = serial.Serial(args.port, args.baud, timeout=0)
-            connection.dtr = True
-        except (serial.SerialException, OSError) as exc:
+            if args.host:
+                connection = TCPStream(args.host, args.tcp_port)
+            else:
+                connection = serial.Serial(args.port, args.baud, timeout=0)
+                connection.dtr = True
+                connection.write(b"s")  # Resume firmware USB output after setup pause.
+        except serial_errors as exc:
             if connection:
                 connection.close()
-            cli.exit(1, f"Cannot open USB serial: {exc}\nClose your Serial Monitor first.\n")
+            cli.exit(1, f"Cannot connect: {exc}\nCheck the Pico address/network or USB port.\n")
+
+    recording = None
+    if args.record:
+        try:
+            recording = open(args.record, "ab")
+        except OSError as exc:
+            if connection:
+                connection.close()
+            cli.exit(1, f"Cannot open recording: {exc}\n")
 
     parser, buffer = Parser(args.mode), LineBuffer()
     samples = {}
@@ -187,7 +230,12 @@ def main():
                 samples[i] = ((math.sin(now + i), math.cos(now + i), 0.3 * i), now)
         elif error is None:
             try:
-                for line in buffer.feed(connection.read(min(connection.in_waiting, 65536))):
+                data = (connection.read() if args.host else
+                        connection.read(min(connection.in_waiting, 65536)))
+                if recording and data:
+                    recording.write(data)
+                    recording.flush()
+                for line in buffer.feed(data):
                     result = parser.feed(line)
                     if result:
                         sensor, xyz = result
@@ -195,7 +243,7 @@ def main():
                             samples.pop(sensor, None)
                         else:
                             samples[sensor] = (xyz, now)
-            except (serial.SerialException, OSError) as exc:
+            except serial_errors as exc:
                 error = str(exc)
                 samples.clear()
         active = {i: xyz for i, (xyz, stamp) in samples.items() if now - stamp < 2}
@@ -252,7 +300,8 @@ def main():
                 limit = max(limit, max(abs(v) for xyz in active.values() for v in xyz) * 1.15)
             ax.set(xlim=(-limit, limit), ylim=(-limit, limit), zlim=(-limit, limit))
         status.set_text(f"Disconnected: {error}. Restart to reconnect." if error else
-                        ("DEMO — simulated data" if args.demo else f"USB: {args.port} | {len(active)}/3 fresh IMUs"))
+                        ("DEMO — simulated data" if args.demo else
+                         f"{'Wi-Fi: ' + args.host + ':' + str(args.tcp_port) if args.host else 'USB: ' + args.port} | {len(active)}/3 fresh IMUs"))
 
     try:
         animation = FuncAnimation(fig, update, interval=50, cache_frame_data=False)
@@ -260,6 +309,8 @@ def main():
     finally:
         if connection:
             connection.close()
+        if recording:
+            recording.close()
 
 
 if __name__ == "__main__":
