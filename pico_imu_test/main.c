@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
+#include "wifi_stream.h"
 
 #define I2C_PORT i2c0
 #define SDA_PIN 0
@@ -11,6 +12,36 @@
 #define MUX_ADDRESS 0x70
 #define IMU_ADDRESS 0x68
 #define TIMEOUT_US 10000
+
+// Leave the wireless board's USB terminal quiet during network setup.
+#ifdef IMU_WIFI
+static bool usb_streaming = false;
+#else
+static bool usb_streaming = true;
+#endif
+
+static void service_connections(void) {
+    static bool usb_was_connected = false;
+    wifi_stream_poll();
+    bool usb_connected = stdio_usb_connected();
+    if (usb_connected && !usb_was_connected) {
+        printf("\nUSB IMU output %s. Commands: s = stream, p = pause, w = Wi-Fi status.\n",
+               usb_streaming ? "running" : "paused");
+        wifi_stream_status();
+    }
+    usb_was_connected = usb_connected;
+    // Nonblocking: networking and sensor acquisition continue while paused.
+    int command = getchar_timeout_us(0);
+    if (command == 'p' || command == 'P') {
+        usb_streaming = false;
+        printf("USB IMU output paused. Press s to resume, w for Wi-Fi status.\n");
+    } else if (command == 's' || command == 'S') {
+        usb_streaming = true;
+        printf("USB IMU output resumed. Press p to pause.\n");
+    } else if (command == 'w' || command == 'W') {
+        wifi_stream_status();
+    }
+}
 
 // MPU6050 registers
 #define PWR_MGMT_1   0x6B
@@ -133,30 +164,34 @@ bool read_imu(uint8_t channel, IMUData *imu) {
 }
 
 static void print_imu(uint8_t channel, const IMUData *imu, bool success) {
-    printf("IMU %u - Channel %u\n",
+    char record[384];
+    int length = snprintf(record, sizeof(record), "IMU %u - Channel %u\n",
            (unsigned int)channel + 1u, (unsigned int)channel);
 
     if (!success) {
-        printf("ERROR: Channel %u failed initialization or could not be read.\n\n",
+        length += snprintf(record + length, sizeof(record) - length,
+               "ERROR: Channel %u failed initialization or could not be read.\n\n",
                (unsigned int)channel);
-        return;
+    } else {
+        length += snprintf(record + length, sizeof(record) - length,
+            "Accel: X=%7.3f Y=%7.3f Z=%7.3f g\n"
+            "Gyro : X=%7.2f Y=%7.2f Z=%7.2f deg/s\n"
+            "Temp : %7.2f C\n\n",
+            imu->accel_x, imu->accel_y, imu->accel_z,
+            imu->gyro_x, imu->gyro_y, imu->gyro_z, imu->temperature);
     }
-
-    printf("Accel: X=%7.3f Y=%7.3f Z=%7.3f g\n",
-           imu->accel_x, imu->accel_y, imu->accel_z);
-    printf("Gyro : X=%7.2f Y=%7.2f Z=%7.2f deg/s\n",
-           imu->gyro_x, imu->gyro_y, imu->gyro_z);
-    printf("Temp : %7.2f C\n\n", imu->temperature);
+    if (length > 0 && (size_t)length < sizeof(record)) {
+        if (usb_streaming) printf("%s", record);
+        wifi_stream_send(record, (size_t)length);
+    }
 }
 
 int main(void) {
     stdio_init_all();
 
-    // Keep the original USB serial startup behavior.
-    while (!stdio_usb_connected()) {
-        sleep_ms(100);
-    }
+    // Start even when powered by a charger with no USB serial terminal.
     sleep_ms(500);
+    wifi_stream_init();
 
     i2c_init(I2C_PORT, 100000);
     gpio_set_function(SDA_PIN, GPIO_FUNC_I2C);
@@ -196,18 +231,23 @@ int main(void) {
     IMUData imu3 = {0};
 
     while (true) {
+        service_connections();
         // Each read has its own result; a failure does not skip other IMUs.
         // Do not report samples from an IMU that failed to wake at startup.
         bool ok1 = initialized[0] && read_imu(0, &imu1);
         bool ok2 = initialized[1] && read_imu(1, &imu2);
         bool ok3 = initialized[2] && read_imu(2, &imu3);
 
-        printf("========================\n");
+        if (usb_streaming) printf("========================\n");
         print_imu(0, &imu1, ok1);
         print_imu(1, &imu2, ok2);
         print_imu(2, &imu3, ok3);
-        printf("========================\n");
+        if (usb_streaming) printf("========================\n");
 
-        sleep_ms(500);
+        absolute_time_t next_sample = make_timeout_time_ms(500);
+        do {
+            service_connections();
+            sleep_ms(10);
+        } while (!time_reached(next_sample));
     }
 }

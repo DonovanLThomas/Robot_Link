@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
+if(NOT DEFINED PICO_BOARD)
+    set(PICO_BOARD pico2_w CACHE STRING "Pico board")
+endif()
 
 # Use -DPICO_SDK_PATH=/path/to/pico-sdk or the PICO_SDK_PATH environment variable.
 if(NOT PICO_SDK_PATH)
@@ -15,6 +18,19 @@ pico_sdk_init()
 
 add_executable(pico_imu_test main.c)
 target_link_libraries(pico_imu_test pico_stdlib hardware_i2c)
+if(PICO_CYW43_SUPPORTED)
+    target_sources(pico_imu_test PRIVATE wifi_stream.c)
+    target_include_directories(pico_imu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    # Notice when the ignored local credentials file is first created or removed.
+    file(GLOB WIFI_LOCAL_CONFIG CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/wifi_config.h")
+    if(WIFI_LOCAL_CONFIG)
+        configure_file(wifi_config.h ${CMAKE_CURRENT_BINARY_DIR}/wifi_build_config.h COPYONLY)
+    else()
+        configure_file(wifi_config.example.h ${CMAKE_CURRENT_BINARY_DIR}/wifi_build_config.h COPYONLY)
+    endif()
+    target_link_libraries(pico_imu_test pico_cyw43_arch_lwip_poll)
+    target_compile_definitions(pico_imu_test PRIVATE IMU_WIFI=1)
+endif()
 target_compile_options(pico_imu_test PRIVATE -Wall -Wextra)
 pico_enable_stdio_usb(pico_imu_test 1)
 pico_enable_stdio_uart(pico_imu_test 0)
