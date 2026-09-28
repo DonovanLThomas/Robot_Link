@@ -4,8 +4,7 @@ Start with MODE = 1 or MODE = 2 and DRY_RUN = True. Do not enable live motion
 until IMU packets, signs, gains, neutral calibration, and joint limits are
 verified with the arm powered and supported safely.
 """
-
-MODE = 1
+MODE = 2
 DRY_RUN = True
 
 IMU_TRANSPORT = "serial"
@@ -32,6 +31,7 @@ HUMAN_JOINTS = (
 )
 
 ROBOT_JOINTS = HUMAN_JOINTS + ("gripper",)
+ACTIVE_JOINTS = HUMAN_JOINTS
 
 # The Pico currently sends these standardized fields. Later, these source
 # strings can point at relative-orientation channels such as
@@ -91,6 +91,7 @@ JOINT_LIMITS = {
 }
 
 MAX_STEP_DEG = 1.0
+MAX_STEP_GRIPPER = 1.0
 DEADBAND_DEG = {
     "shoulder_pan": 2.0,
     "shoulder_lift": 2.0,
@@ -100,7 +101,7 @@ DEADBAND_DEG = {
 }
 
 LOW_PASS_ALPHA = 0.25
-FIXED_GRIPPER_POSITION = 30.0
+FIXED_GRIPPER_POSITION = None
 
 DRY_RUN_ROBOT_START_POSE = {
     "shoulder_pan": 0.0,
@@ -108,5 +109,5 @@ DRY_RUN_ROBOT_START_POSE = {
     "elbow_flex": 0.0,
     "wrist_flex": 0.0,
     "wrist_roll": 0.0,
-    "gripper": FIXED_GRIPPER_POSITION,
+    "gripper": 30.0,
 }

@@ -2,9 +2,12 @@
 
 This directory is the Jetson-side half of the Pico IMU -> SO-101 teleoperation
 pipeline. USB serial is the default transport; no Wi-Fi or IP address is needed.
-It starts in input-only mode:
+For motor calibration, joint-limit measurement, and first live movement, follow
+[the step-by-step live-mode guide](LIVE_MODE.md).
 
-- `MODE = 1`
+The current default is mapping dry run:
+
+- `MODE = 2` (use `--mode 1` for input only)
 - `DRY_RUN = True`
 - no LeRobot import
 - no robot connection
@@ -63,7 +66,10 @@ Important fields:
 - `JOINT_LIMITS_VERIFIED`: must be `True` before live Mode 3 can run.
 - `MAX_STEP_DEG`, `DEADBAND_DEG`, `LOW_PASS_ALPHA`: safety and smoothing.
 
-The gripper is fixed by `FIXED_GRIPPER_POSITION`.
+Arm positions use degrees (`use_degrees=True` in LeRobot). The gripper uses
+LeRobot's normalized 0–100 units. `FIXED_GRIPPER_POSITION = None` holds the
+gripper position captured at neutral calibration; a numeric value chooses a
+fixed target, approached with `MAX_STEP_GRIPPER` per update.
 
 ## Run on the Jetson
 
@@ -79,7 +85,7 @@ its root in your Python environment:
 cd ~/Robot_Link
 python3 -m pip install -r jetson_controller/requirements.txt
 ls -l /dev/serial/by-id/
-python3 jetson_controller/run_teleop.py --serial-port /dev/ttyACM0
+python3 jetson_controller/run_teleop.py --mode 1 --serial-port /dev/ttyACM0
 ```
 
 Replace `/dev/ttyACM0` with the Pico device shown on your Jetson; you can pass
@@ -156,14 +162,39 @@ python3 -c 'import json,socket,time; p={"seq":1,"timestamp_ms":int(time.time()*1
 
 While `run_teleop.py` is running:
 
-- `Enter`: capture neutral pose after a valid packet has arrived.
-- `Space` or `q`: emergency stop. The program stops sending commands and
-  disconnects the robot in `finally`.
+- `Enter` or `c`: capture neutral pose in Modes 2/3 after a fresh packet has arrived.
+- `Space` or `q`: software stop. The program disconnects and disables motor
+  torque; support the arm because it may sag. This is not a hardware emergency stop.
 
 On packet timeout, the controller prints:
 
 ```text
-IMU DATA TIMEOUT - HOLDING POSITION
+IMU DATA TIMEOUT - HOLDING LAST TARGET. Press c with fresh data to resume.
 ```
 
-It holds the last safety-limited command rather than continuing stale motion.
+No further targets are sent after timeout. The servos retain their last target,
+and neutral calibration is cleared. Fresh packets alone do not restart motion;
+hold a neutral pose and press `c` again. USB disconnection exits and disables
+torque instead. Live startup checks motor calibration and joint bounds with
+torque disabled, loads the measured pose as the initial target, then configures
+the follower. Support the arm through connection and disconnection.
+
+## Tabletop Mapping Check
+
+Run in an interactive terminal with the IMUs resting still on the table:
+
+```sh
+python3 jetson_controller/run_teleop.py --mode 2 --serial-port /dev/ttyACM0
+```
+
+Press `c` or Enter and look for `calibrated: True` in the recurring diagnostics.
+Mode 1 now explains that calibration requires Mode 2; missing or stale packets
+produce a calibration-not-ready message. If keyboard input is unavailable, run
+in a terminal directly or allocate a terminal with `ssh -t`.
+
+Leave IMUs 1 and 3 still and slowly tilt IMU 2 (mux channel 1) forward/backward.
+Watch `shoulder_lift` and the mapped targets change. The current algorithm
+measures tilt, not vertical position: lifting a level sensor up/down does not
+produce a sustained angle change. Mode 2 displays targets without moving motors.
+Live Mode 3 still requires a calibrated robot, its serial port, verified limits,
+and `DRY_RUN = False`.

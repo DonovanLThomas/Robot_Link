@@ -10,6 +10,7 @@ Modes:
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import select
 import sys
@@ -49,11 +50,19 @@ class Keyboard:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mode", type=int, choices=(1, 2, 3), default=config.MODE)
     parser.add_argument("--transport", choices=("serial", "udp"), default=config.IMU_TRANSPORT)
     parser.add_argument("--serial-port", default=config.IMU_SERIAL_PORT)
+    parser.add_argument("--robot-port", default=config.ROBOT_PORT)
+    parser.add_argument("--joint", action="append", choices=config.HUMAN_JOINTS,
+                        help="Control only this joint; repeat for multiple joints")
     args = parser.parse_args()
+    config.MODE = args.mode
     config.IMU_TRANSPORT = args.transport
     config.IMU_SERIAL_PORT = args.serial_port
+    config.ROBOT_PORT = args.robot_port
+    if args.joint:
+        config.ACTIVE_JOINTS = tuple(args.joint)
     validate_config()
     live = config.MODE == 3 and not config.DRY_RUN
 
@@ -80,37 +89,48 @@ def main() -> int:
     diag_period = 1.0 / config.DIAGNOSTICS_HZ
 
     try:
+        if live and not sys.stdin.isatty():
+            raise RuntimeError("Live mode requires an interactive terminal (use ssh -t).")
         robot.connect()
         with Keyboard() as keyboard:
+            if not keyboard.enabled:
+                print("Keyboard input unavailable. Run in an interactive terminal; use ssh -t for remote commands.")
             while True:
                 loop_start = time.monotonic()
                 key = keyboard.read_key()
                 if key in (" ", "q", "Q"):
-                    print("Emergency stop requested. Holding/disconnecting.")
+                    print("Stop requested. Disconnecting; live motor torque will be disabled.")
                     break
 
                 packet = receiver.read_latest()
                 if packet is not None:
                     latest_human = packet.human
 
-                if config.MODE == 1:
+                if key in ("\n", "\r", "c", "C"):
+                    if config.MODE == 1:
+                        print("Mode 1 only displays input. Restart with --mode 2 to calibrate.")
+                    elif latest_human is None or receiver.timed_out():
+                        print("Calibration not ready: waiting for fresh IMU packets.")
+                    else:
+                        robot_start = robot.get_current_pose()
+                        limiter.initialize(robot_start)
+                        mapper.calibrate(latest_human, robot_start)
+                        print("Neutral pose calibrated. Tilt an IMU to change the mapped targets.")
+                elif config.MODE == 1:
                     safe_command = None
-                elif latest_human is not None and key in ("\n", "\r"):
-                    robot_start = robot.get_current_pose()
-                    mapper.calibrate(latest_human, robot_start)
-                    limiter.initialize(robot_start)
-                    print("Neutral pose calibrated.")
                 elif mapper.is_calibrated():
                     if receiver.timed_out():
                         now = time.monotonic()
                         safe_command = limiter.hold_position()
                         if now - last_timeout_warning > 1.0:
-                            print("IMU DATA TIMEOUT - HOLDING POSITION")
+                            print("IMU DATA TIMEOUT - HOLDING LAST TARGET. Press c with fresh data to resume.")
                             last_timeout_warning = now
+                        mapper.reset()
                     elif latest_human is not None:
                         filtered_human, robot_target = mapper.update(latest_human)
                         safe_command = limiter.apply(robot_target)
-                        robot.send_action(safe_command)
+                        safe_command = robot.send_action(safe_command)
+                        limiter.current_command = dict(safe_command)
 
                 now = time.monotonic()
                 if now - last_diag >= diag_period:
@@ -122,13 +142,15 @@ def main() -> int:
                 if sleep_for > 0:
                     time.sleep(sleep_for)
     except KeyboardInterrupt:
-        print("Interrupted. Holding/disconnecting.")
-    except OSError as exc:
-        print(f"IMU/control I/O failed: {exc}. Holding/disconnecting.")
+        print("Interrupted. Disconnecting; live motor torque will be disabled.")
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"Controller stopped: {exc}. Disconnecting; live motor torque will be disabled.")
         return 1
     finally:
-        receiver.close()
-        robot.disconnect()
+        try:
+            receiver.close()
+        finally:
+            robot.disconnect()
     return 0
 
 
@@ -137,12 +159,29 @@ def validate_config() -> None:
         raise SystemExit("IMU_TRANSPORT must be serial or udp")
     if config.MODE not in (1, 2, 3):
         raise SystemExit("MODE must be 1, 2, or 3")
-    if config.CONTROL_HZ <= 0 or config.DIAGNOSTICS_HZ <= 0:
-        raise SystemExit("CONTROL_HZ and DIAGNOSTICS_HZ must be positive")
+    if not all(math.isfinite(value) and value > 0 for value in
+               (config.CONTROL_HZ, config.DIAGNOSTICS_HZ, config.PACKET_TIMEOUT_S)):
+        raise SystemExit("CONTROL_HZ, DIAGNOSTICS_HZ and PACKET_TIMEOUT_S must be finite and positive")
     if not 0.0 < config.LOW_PASS_ALPHA <= 1.0:
         raise SystemExit("LOW_PASS_ALPHA must be in (0, 1]")
-    if config.MAX_STEP_DEG <= 0:
-        raise SystemExit("MAX_STEP_DEG must be positive")
+    if not all(math.isfinite(value) and value > 0 for value in
+               (config.MAX_STEP_DEG, config.MAX_STEP_GRIPPER)):
+        raise SystemExit("MAX_STEP_DEG and MAX_STEP_GRIPPER must be finite and positive")
+    for joint in config.ROBOT_JOINTS:
+        low, high = config.JOINT_LIMITS[joint]
+        if not math.isfinite(low) or not math.isfinite(high) or low >= high:
+            raise SystemExit(f"Invalid limits for {joint}")
+    gripper_low, gripper_high = config.JOINT_LIMITS["gripper"]
+    if not 0 <= gripper_low < gripper_high <= 100:
+        raise SystemExit("Gripper limits must be in LeRobot's 0-100 range")
+    if config.FIXED_GRIPPER_POSITION is not None:
+        if not gripper_low <= config.FIXED_GRIPPER_POSITION <= gripper_high:
+            raise SystemExit("FIXED_GRIPPER_POSITION must be within gripper limits")
+    for joint in config.HUMAN_JOINTS:
+        if not math.isfinite(config.GAINS[joint]):
+            raise SystemExit(f"Non-finite gain for {joint}")
+        if not math.isfinite(config.DEADBAND_DEG[joint]) or config.DEADBAND_DEG[joint] < 0:
+            raise SystemExit(f"Invalid deadband for {joint}")
     for joint, sign in config.SIGNS.items():
         if sign not in (-1, 1):
             raise SystemExit(f"{joint} sign must be 1 or -1")
@@ -153,6 +192,8 @@ def validate_config() -> None:
             raise SystemExit("Set JOINT_LIMITS_VERIFIED = True only after verifying safe limits.")
         if not config.ROBOT_PORT:
             raise SystemExit("Set ROBOT_PORT before MODE 3 live teleoperation.")
+        if config.IMU_TRANSPORT == "serial" and os.path.realpath(config.ROBOT_PORT) == os.path.realpath(config.IMU_SERIAL_PORT):
+            raise SystemExit("ROBOT_PORT and IMU_SERIAL_PORT must be different USB devices")
 
 
 def print_startup_banner(live: bool) -> None:
@@ -169,7 +210,10 @@ def print_startup_banner(live: bool) -> None:
         print(f"UDP listen: {config.UDP_BIND_IP}:{config.UDP_PORT}")
     print(f"DRY_RUN: {config.DRY_RUN}")
     print(f"Live robot commands enabled: {live}")
-    print("Keys: Enter = calibrate neutral pose, Space/q = emergency stop")
+    if live:
+        print("Support the arm at connection and exit; disconnect disables motor torque.")
+    print(f"Active joints: {', '.join(config.ACTIVE_JOINTS)}; arm units: degrees; gripper: 0-100")
+    print("Keys: Enter/c = calibrate and start mapping, Space/q = stop and disconnect")
     print("=" * 72)
 
 
@@ -188,7 +232,7 @@ def print_diagnostics(receiver: ImuReceiver,
     print_joint_block("Robot target", robot_target, config.ROBOT_JOINTS)
     print_joint_block("Safety command", safe_command, config.ROBOT_JOINTS)
     if config.MODE in (2, 3) and not calibrated:
-        print("Waiting: receive a valid packet, hold neutral pose, then press Enter.")
+        print("Waiting: receive a valid packet, hold neutral pose, then press Enter or c.")
 
 
 def print_joint_block(title: str, values: dict[str, float] | None,

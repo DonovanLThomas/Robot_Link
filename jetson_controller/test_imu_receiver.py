@@ -90,6 +90,38 @@ class UdpReceiverTests(unittest.TestCase):
 
 
 class ControllerSerialTests(unittest.TestCase):
+    def test_calibration_keys_and_feedback(self):
+        cases = (
+            (1, "\n", True, False, "Mode 1 only displays input", False),
+            (2, "\n", False, True, "waiting for fresh IMU packets", False),
+            (2, "c", True, True, "waiting for fresh IMU packets", False),
+            (2, "\n", True, False, "Neutral pose calibrated", True),
+            (2, "c", True, False, "Neutral pose calibrated", True),
+        )
+        for mode, key, has_packet, stale, message, calibrated in cases:
+            with self.subTest(mode=mode, key=key, has_packet=has_packet, stale=stale), \
+                 patch.object(config, "MODE", 1), \
+                 patch.object(config, "IMU_TRANSPORT", "serial"), \
+                 patch.object(config, "IMU_SERIAL_PORT", "/dev/test-pico"), \
+                 patch.object(config, "DRY_RUN", True), \
+                 patch("sys.argv", ["run_teleop.py", "--mode", str(mode)]), \
+                 patch("run_teleop.SerialImuReceiver") as receiver_factory, \
+                 patch("run_teleop.RobotController") as robot_factory, \
+                 patch("run_teleop.JointMapper") as mapper_factory, \
+                 patch("run_teleop.Keyboard") as keyboard_factory, \
+                 patch("run_teleop.print_diagnostics"), \
+                 patch("run_teleop.time.sleep"), \
+                 patch("builtins.print") as output:
+                receiver = receiver_factory.return_value
+                receiver.read_latest.return_value = Mock(human=dict.fromkeys(config.HUMAN_JOINTS, 0.0)) if has_packet else None
+                receiver.timed_out.return_value = stale
+                robot_factory.return_value.get_current_pose.return_value = config.DRY_RUN_ROBOT_START_POSE
+                keyboard_factory.return_value.__enter__.return_value.read_key.side_effect = [key, "q"]
+                self.assertEqual(run_teleop.main(), 0)
+                self.assertEqual(mapper_factory.return_value.calibrate.called, calibrated)
+                self.assertTrue(any(message in str(call) for call in output.call_args_list))
+                robot_factory.return_value.send_action.assert_not_called()
+
     def test_selected_port_and_disconnect_cleanup(self):
         with patch.object(config, "IMU_TRANSPORT", "serial"), \
              patch.object(config, "IMU_SERIAL_PORT", "/dev/default-pico"), \

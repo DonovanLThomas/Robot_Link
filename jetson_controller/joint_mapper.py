@@ -30,6 +30,10 @@ class JointMapper:
     def is_calibrated(self) -> bool:
         return self.calibration is not None
 
+    def reset(self) -> None:
+        self.calibration = None
+        self.filtered_human = None
+
     def update(self, human_angles: dict[str, float]) -> tuple[dict[str, float], dict[str, float]]:
         """Return filtered human angles and mapped robot targets."""
         if self.calibration is None:
@@ -38,6 +42,9 @@ class JointMapper:
         filtered = self._filter_human_angles(human_angles)
         target = {}
         for joint in config.HUMAN_JOINTS:
+            if joint not in config.ACTIVE_JOINTS:
+                target[joint] = self.calibration.robot_start[joint]
+                continue
             source = config.JOINT_SOURCES[joint]
             human_value = self._resolve_source(filtered, source)
             human_zero = self._resolve_source(self.calibration.human_zero, source)
@@ -47,7 +54,9 @@ class JointMapper:
                 + config.SIGNS[joint] * config.GAINS[joint] * delta
             )
 
-        target["gripper"] = config.FIXED_GRIPPER_POSITION
+        target["gripper"] = (self.calibration.robot_start["gripper"]
+                             if config.FIXED_GRIPPER_POSITION is None
+                             else config.FIXED_GRIPPER_POSITION)
         return filtered, target
 
     def _filter_human_angles(self, human_angles: dict[str, float]) -> dict[str, float]:
