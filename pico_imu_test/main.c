@@ -1,9 +1,14 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "wifi_stream.h"
+#include "teleop_udp.h"
+#ifdef IMU_WIFI
+#include "wifi_build_config.h"
+#endif
 
 #define I2C_PORT i2c0
 #define SDA_PIN 0
@@ -12,6 +17,15 @@
 #define MUX_ADDRESS 0x70
 #define IMU_ADDRESS 0x68
 #define TIMEOUT_US 10000
+#define RAW_TEXT_PERIOD_MS 500
+
+#ifndef TELEOP_SEND_PERIOD_MS
+#define TELEOP_SEND_PERIOD_MS 25
+#endif
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // Leave the wireless board's USB terminal quiet during network setup.
 #ifdef IMU_WIFI
@@ -56,6 +70,94 @@ typedef struct {
     float gyro_z;
     float temperature;
 } IMUData;
+
+typedef struct {
+    float shoulder_pan;
+    float shoulder_lift;
+    float elbow_flex;
+    float wrist_flex;
+    float wrist_roll;
+} HumanJointState;
+
+static float radians_to_degrees(float radians) {
+    return radians * 180.0f / (float)M_PI;
+}
+
+static float vector_norm3(float x, float y, float z) {
+    return sqrtf(x * x + y * y + z * z);
+}
+
+static float angle_between3(float ax, float ay, float az, float bx, float by, float bz) {
+    float a_norm = vector_norm3(ax, ay, az);
+    float b_norm = vector_norm3(bx, by, bz);
+    if (a_norm < 1e-6f || b_norm < 1e-6f) return 0.0f;
+
+    float cosine = (ax * bx + ay * by + az * bz) / (a_norm * b_norm);
+    if (cosine > 1.0f) cosine = 1.0f;
+    if (cosine < -1.0f) cosine = -1.0f;
+    return radians_to_degrees(acosf(cosine));
+}
+
+static float accel_pitch_degrees(const IMUData *imu) {
+    return radians_to_degrees(atan2f(-imu->accel_x,
+        sqrtf(imu->accel_y * imu->accel_y + imu->accel_z * imu->accel_z)));
+}
+
+static float accel_roll_degrees(const IMUData *imu) {
+    return radians_to_degrees(atan2f(imu->accel_y, imu->accel_z));
+}
+
+static HumanJointState estimate_human_joints_from_current_samples(
+    const IMUData *shoulder,
+    const IMUData *upper_arm,
+    const IMUData *forearm
+) {
+    float shoulder_pitch = accel_pitch_degrees(shoulder);
+    float upper_pitch = accel_pitch_degrees(upper_arm);
+    float forearm_pitch = accel_pitch_degrees(forearm);
+    float upper_roll = accel_roll_degrees(upper_arm);
+    float forearm_roll = accel_roll_degrees(forearm);
+
+    // This is an initial teleop packet contract, not full orientation fusion.
+    // MPU6050 accel tilt cannot observe yaw, so shoulder pan is held neutral.
+    // The elbow field preserves the existing triangle-angle experiment by
+    // measuring the angle at IMU 2 between the three acceleration endpoints.
+    HumanJointState joints = {
+        .shoulder_pan = 0.0f,
+        .shoulder_lift = upper_pitch - shoulder_pitch,
+        .elbow_flex = angle_between3(
+            shoulder->accel_x - upper_arm->accel_x,
+            shoulder->accel_y - upper_arm->accel_y,
+            shoulder->accel_z - upper_arm->accel_z,
+            forearm->accel_x - upper_arm->accel_x,
+            forearm->accel_y - upper_arm->accel_y,
+            forearm->accel_z - upper_arm->accel_z
+        ),
+        .wrist_flex = forearm_pitch - upper_pitch,
+        .wrist_roll = forearm_roll - upper_roll,
+    };
+    return joints;
+}
+
+static void send_teleop_packet(const HumanJointState *joints) {
+    static uint32_t sequence = 0;
+    char packet[256];
+    int length = snprintf(packet, sizeof(packet),
+        "{\"seq\":%lu,\"timestamp_ms\":%llu,"
+        "\"shoulder_pan\":%.3f,\"shoulder_lift\":%.3f,"
+        "\"elbow_flex\":%.3f,\"wrist_flex\":%.3f,\"wrist_roll\":%.3f}\n",
+        (unsigned long)sequence++,
+        (unsigned long long)to_ms_since_boot(get_absolute_time()),
+        joints->shoulder_pan,
+        joints->shoulder_lift,
+        joints->elbow_flex,
+        joints->wrist_flex,
+        joints->wrist_roll);
+
+    if (length > 0 && (size_t)length < sizeof(packet)) {
+        teleop_udp_send(packet, (size_t)length);
+    }
+}
 
 static bool mux_select_channel(uint8_t channel) {
     if (channel > 7) {
@@ -192,6 +294,7 @@ int main(void) {
     // Start even when powered by a charger with no USB serial terminal.
     sleep_ms(500);
     wifi_stream_init();
+    teleop_udp_init();
 
     i2c_init(I2C_PORT, 100000);
     gpio_set_function(SDA_PIN, GPIO_FUNC_I2C);
@@ -230,24 +333,37 @@ int main(void) {
     IMUData imu2 = {0};
     IMUData imu3 = {0};
 
+    absolute_time_t next_sample = get_absolute_time();
+    absolute_time_t next_raw_text = get_absolute_time();
+
     while (true) {
         service_connections();
+        if (!time_reached(next_sample)) {
+            sleep_ms(1);
+            continue;
+        }
+
         // Each read has its own result; a failure does not skip other IMUs.
         // Do not report samples from an IMU that failed to wake at startup.
         bool ok1 = initialized[0] && read_imu(0, &imu1);
         bool ok2 = initialized[1] && read_imu(1, &imu2);
         bool ok3 = initialized[2] && read_imu(2, &imu3);
 
-        if (usb_streaming) printf("========================\n");
-        print_imu(0, &imu1, ok1);
-        print_imu(1, &imu2, ok2);
-        print_imu(2, &imu3, ok3);
-        if (usb_streaming) printf("========================\n");
+        if (ok1 && ok2 && ok3) {
+            HumanJointState joints =
+                estimate_human_joints_from_current_samples(&imu1, &imu2, &imu3);
+            send_teleop_packet(&joints);
+        }
 
-        absolute_time_t next_sample = make_timeout_time_ms(500);
-        do {
-            service_connections();
-            sleep_ms(10);
-        } while (!time_reached(next_sample));
+        if (time_reached(next_raw_text)) {
+            if (usb_streaming) printf("========================\n");
+            print_imu(0, &imu1, ok1);
+            print_imu(1, &imu2, ok2);
+            print_imu(2, &imu3, ok3);
+            if (usb_streaming) printf("========================\n");
+            next_raw_text = make_timeout_time_ms(RAW_TEXT_PERIOD_MS);
+        }
+
+        next_sample = make_timeout_time_ms(TELEOP_SEND_PERIOD_MS);
     }
 }

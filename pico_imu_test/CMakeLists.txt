@@ -17,9 +17,9 @@ set(CMAKE_C_STANDARD 11)
 pico_sdk_init()
 
 add_executable(pico_imu_test main.c)
-target_link_libraries(pico_imu_test pico_stdlib hardware_i2c)
+target_link_libraries(pico_imu_test pico_stdlib hardware_i2c m)
 if(PICO_CYW43_SUPPORTED)
-    target_sources(pico_imu_test PRIVATE wifi_stream.c)
+    target_sources(pico_imu_test PRIVATE wifi_stream.c teleop_udp.c)
     target_include_directories(pico_imu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
     # Notice when the ignored local credentials file is first created or removed.
     file(GLOB WIFI_LOCAL_CONFIG CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/wifi_config.h")

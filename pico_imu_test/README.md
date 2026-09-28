@@ -1,10 +1,15 @@
 # Three MPU6050s over USB and Wi-Fi
 
 C firmware for a Raspberry Pi Pico 2 W reads three MPU6050s through a TCA9548A
-multiplexer about twice per second. Each record contains acceleration in g,
-gyroscope readings in degrees/second, and temperature in Celsius. The same
-records can go to USB serial and one connected TCP client. Acquisition starts without
-a USB terminal, so the board can run from a USB power supply.
+multiplexer. Human-readable records are printed about twice per second. Each
+record contains acceleration in g, gyroscope readings in degrees/second, and
+temperature in Celsius. The same records can go to USB serial and one connected
+TCP client. Acquisition starts without a USB terminal, so the board can run from
+a USB power supply.
+
+An optional UDP teleoperation stream can also send standardized human joint
+fields to the Jetson at about 30-50 Hz. This UDP stream is separate from the
+existing USB/TCP viewer stream.
 
 The [Python viewer](viewer/README.md) displays the acceleration readings as a
 triangle or 3D vectors and can save the received stream. These readings are not
@@ -46,6 +51,36 @@ literals). This file is ignored by Git. Do not put credentials in the example.
 The default TCP port is 4242. With no local configuration, the firmware builds
 and runs with Wi-Fi disabled and USB available. Credentials are embedded in the
 compiled firmware, so keep configured UF2 files private.
+
+To enable Jetson teleoperation packets in your local ignored `wifi_config.h`:
+
+```c
+#define TELEOP_UDP_ENABLED 1
+#define JETSON_IP "192.168.x.x"
+#define JETSON_UDP_PORT 5005
+#define TELEOP_SEND_PERIOD_MS 25
+```
+
+The current UDP JSON packet is:
+
+```json
+{
+  "seq": 1234,
+  "timestamp_ms": 12345678,
+  "shoulder_pan": 0.0,
+  "shoulder_lift": 12.3,
+  "elbow_flex": 65.4,
+  "wrist_flex": -3.2,
+  "wrist_roll": 8.7
+}
+```
+
+The first implementation derives these fields from the existing accel readings:
+`shoulder_pan` is held at zero because an MPU6050 accelerometer/gyro alone does
+not provide reliable yaw, `shoulder_lift` and wrist fields use relative accel
+tilt estimates, and `elbow_flex` preserves the existing triangle-angle
+experiment at IMU 2. Treat these as a stable networking/mapping contract, not
+finished orientation fusion.
 
 Use a normal WPA2-compatible home network or hotspot. Put the laptop on the
 same LAN; guest/client isolation can prevent connections. The laptop can be on
