@@ -80,14 +80,14 @@ SIGNS = {
 
 # Conservative placeholders. Replace these with limits from your calibrated
 # SO-101 setup before live operation.
-JOINT_LIMITS_VERIFIED = False
+JOINT_LIMITS_VERIFIED = True
 JOINT_LIMITS = {
-    "shoulder_pan": (-30.0, 30.0),
-    "shoulder_lift": (-30.0, 30.0),
-    "elbow_flex": (-30.0, 30.0),
-    "wrist_flex": (-30.0, 30.0),
-    "wrist_roll": (-30.0, 30.0),
-    "gripper": (0.0, 60.0),
+    "shoulder_pan": (-100.0, 100.0),
+    "shoulder_lift": (-100.0, 100.0),
+    "elbow_flex": (-90.0, 90.0),
+    "wrist_flex": (-100.0, 100.0),
+    "wrist_roll": (-8.0, 90.0),
+    "gripper": (0.0, 100.0),
 }
 
 MAX_STEP_DEG = 1.0
